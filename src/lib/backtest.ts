@@ -1,4 +1,5 @@
 import {
+  ATR,
   BollingerBands,
   CCI,
   EMA,
@@ -11,6 +12,7 @@ import {
 
 import type { Candle, SupportedInterval } from "@/lib/market-data";
 import { intervalToMs } from "@/lib/market-data";
+import { STRATEGY_CATALOG } from "@/lib/strategy-catalog";
 
 type Signal = -1 | 0 | 1;
 
@@ -43,6 +45,7 @@ export type StrategyResult = {
 };
 
 type Strategy = {
+  id: string;
   name: string;
   signalAt: (index: number) => Signal;
 };
@@ -56,6 +59,40 @@ function alignSeries<T>(input: T[], length: number): Array<T | undefined> {
     result[i + offset] = input[i];
   }
   return result;
+}
+
+function emaSeries(values: number[], period: number): number[] {
+  if (values.length === 0) {
+    return [];
+  }
+  const k = 2 / (period + 1);
+  const output = new Array<number>(values.length);
+  let ema = values[0];
+  output[0] = ema;
+  for (let i = 1; i < values.length; i += 1) {
+    ema = values[i] * k + ema * (1 - k);
+    output[i] = ema;
+  }
+  return output;
+}
+
+function smaSeries(values: number[], period: number): Array<number | undefined> {
+  const output = new Array<number | undefined>(values.length).fill(undefined);
+  if (period <= 0 || values.length < period) {
+    return output;
+  }
+
+  let rollingSum = 0;
+  for (let i = 0; i < values.length; i += 1) {
+    rollingSum += values[i];
+    if (i >= period) {
+      rollingSum -= values[i - period];
+    }
+    if (i >= period - 1) {
+      output[i] = rollingSum / period;
+    }
+  }
+  return output;
 }
 
 function crossUp(
@@ -152,6 +189,7 @@ function buildStrategies(candles: Candle[]): Strategy[] {
   const closes = candles.map((candle) => candle.close);
   const highs = candles.map((candle) => candle.high);
   const lows = candles.map((candle) => candle.low);
+  const hlc3 = candles.map((candle) => (candle.high + candle.low + candle.close) / 3);
 
   const sma20 = alignSeries(SMA.calculate({ period: 20, values: closes }), candles.length);
   const sma50 = alignSeries(SMA.calculate({ period: 50, values: closes }), candles.length);
@@ -207,8 +245,61 @@ function buildStrategies(candles: Candle[]): Strategy[] {
     candles.length,
   );
 
-  return [
+  const atr10 = alignSeries(
+    ATR.calculate({
+      high: highs,
+      low: lows,
+      close: closes,
+      period: 10,
+    }),
+    candles.length,
+  );
+  const utTrailingStop = new Array<number | undefined>(candles.length).fill(undefined);
+  const utAtrFactor = 1;
+  for (let i = 0; i < candles.length; i += 1) {
+    const atr = atr10[i];
+    const close = closes[i];
+    if (atr === undefined || close === undefined) {
+      continue;
+    }
+    const nLoss = utAtrFactor * atr;
+    if (i === 0 || utTrailingStop[i - 1] === undefined) {
+      utTrailingStop[i] = close - nLoss;
+      continue;
+    }
+
+    const prevStop = utTrailingStop[i - 1] as number;
+    const prevClose = closes[i - 1];
+    if (prevClose === undefined) {
+      utTrailingStop[i] = close - nLoss;
+      continue;
+    }
+
+    if (close > prevStop && prevClose > prevStop) {
+      utTrailingStop[i] = Math.max(prevStop, close - nLoss);
+    } else if (close < prevStop && prevClose < prevStop) {
+      utTrailingStop[i] = Math.min(prevStop, close + nLoss);
+    } else {
+      utTrailingStop[i] = close > prevStop ? close - nLoss : close + nLoss;
+    }
+  }
+
+  const wtEsa = emaSeries(hlc3, 10);
+  const wtDelta = hlc3.map((value, index) => Math.abs(value - wtEsa[index]));
+  const wtD = emaSeries(wtDelta, 10);
+  const wtCi = hlc3.map((value, index) => {
+    const denom = 0.015 * wtD[index];
+    if (!Number.isFinite(denom) || denom === 0) {
+      return 0;
+    }
+    return (value - wtEsa[index]) / denom;
+  });
+  const wt1 = emaSeries(wtCi, 21);
+  const wt2 = smaSeries(wt1, 4);
+
+  const strategies: Strategy[] = [
     {
+      id: "sma_20_50_cross",
       name: "SMA 20/50 Crossover",
       signalAt: (i): Signal => {
         if (crossUp(sma20[i - 1], sma20[i], sma50[i - 1], sma50[i])) {
@@ -221,6 +312,7 @@ function buildStrategies(candles: Candle[]): Strategy[] {
       },
     },
     {
+      id: "ema_12_26_cross",
       name: "EMA 12/26 Crossover",
       signalAt: (i): Signal => {
         if (crossUp(ema12[i - 1], ema12[i], ema26[i - 1], ema26[i])) {
@@ -233,6 +325,32 @@ function buildStrategies(candles: Candle[]): Strategy[] {
       },
     },
     {
+      id: "ema_200_cross",
+      name: "EMA 200 Cross",
+      signalAt: (i): Signal => {
+        const prevClose = closes[i - 1];
+        const close = closes[i];
+        const prevEma = ema200[i - 1];
+        const ema = ema200[i];
+        if (
+          prevClose === undefined ||
+          close === undefined ||
+          prevEma === undefined ||
+          ema === undefined
+        ) {
+          return 0;
+        }
+        if (prevClose <= prevEma && close > ema) {
+          return 1;
+        }
+        if (prevClose >= prevEma && close < ema) {
+          return -1;
+        }
+        return 0;
+      },
+    },
+    {
+      id: "rsi_14_reversion",
       name: "RSI 14 Reversion",
       signalAt: (i): Signal => {
         const prev = rsi14[i - 1];
@@ -250,6 +368,7 @@ function buildStrategies(candles: Candle[]): Strategy[] {
       },
     },
     {
+      id: "macd_signal_cross",
       name: "MACD Signal Cross",
       signalAt: (i): Signal => {
         const prev = macd[i - 1];
@@ -267,6 +386,7 @@ function buildStrategies(candles: Candle[]): Strategy[] {
       },
     },
     {
+      id: "bollinger_reentry",
       name: "Bollinger Re-Entry (20,2)",
       signalAt: (i): Signal => {
         const prev = bb20[i - 1];
@@ -274,8 +394,8 @@ function buildStrategies(candles: Candle[]): Strategy[] {
         if (!prev || !curr) {
           return 0;
         }
-        const prevClose = candles[i - 1]?.close;
-        const close = candles[i]?.close;
+        const prevClose = closes[i - 1];
+        const close = closes[i];
         if (prevClose === undefined || close === undefined) {
           return 0;
         }
@@ -290,6 +410,7 @@ function buildStrategies(candles: Candle[]): Strategy[] {
       },
     },
     {
+      id: "stochastic_14_3",
       name: "Stochastic 14/3",
       signalAt: (i): Signal => {
         const prev = stoch[i - 1];
@@ -307,6 +428,7 @@ function buildStrategies(candles: Candle[]): Strategy[] {
       },
     },
     {
+      id: "williams_r_14",
       name: "Williams %R 14",
       signalAt: (i): Signal => {
         const prev = wr14[i - 1];
@@ -324,6 +446,7 @@ function buildStrategies(candles: Candle[]): Strategy[] {
       },
     },
     {
+      id: "cci_20_threshold",
       name: "CCI 20 Threshold",
       signalAt: (i): Signal => {
         const prev = cci20[i - 1];
@@ -341,6 +464,7 @@ function buildStrategies(candles: Candle[]): Strategy[] {
       },
     },
     {
+      id: "ema_200_rsi_regime",
       name: "EMA 200 + RSI Regime",
       signalAt: (i): Signal => {
         const ema = ema200[i];
@@ -359,7 +483,64 @@ function buildStrategies(candles: Candle[]): Strategy[] {
         return 0;
       },
     },
+    {
+      id: "ut_buy_alert",
+      name: "UT Buy Alert",
+      signalAt: (i): Signal => {
+        const prevClose = closes[i - 1];
+        const close = closes[i];
+        const prevStop = utTrailingStop[i - 1];
+        const stop = utTrailingStop[i];
+        if (
+          prevClose === undefined ||
+          close === undefined ||
+          prevStop === undefined ||
+          stop === undefined
+        ) {
+          return 0;
+        }
+
+        if (prevClose <= prevStop && close > stop) {
+          return 1;
+        }
+        if (prevClose >= prevStop && close < stop) {
+          return -1;
+        }
+        return 0;
+      },
+    },
+    {
+      id: "wavetrend_cross",
+      name: "WaveTrend Cross",
+      signalAt: (i): Signal => {
+        const prevWt1 = wt1[i - 1];
+        const currWt1 = wt1[i];
+        const prevWt2 = wt2[i - 1];
+        const currWt2 = wt2[i];
+        if (
+          prevWt1 === undefined ||
+          currWt1 === undefined ||
+          prevWt2 === undefined ||
+          currWt2 === undefined
+        ) {
+          return 0;
+        }
+
+        if (crossUp(prevWt1, currWt1, prevWt2, currWt2) && currWt1 < -40) {
+          return 1;
+        }
+        if (crossDown(prevWt1, currWt1, prevWt2, currWt2) && currWt1 > 40) {
+          return -1;
+        }
+        return 0;
+      },
+    },
   ];
+
+  const orderedMap = new Map(strategies.map((strategy) => [strategy.id, strategy]));
+  return STRATEGY_CATALOG.map((item) => orderedMap.get(item.id)).filter(
+    (strategy): strategy is Strategy => Boolean(strategy),
+  );
 }
 
 function runSingleStrategy(params: {
@@ -505,11 +686,24 @@ export function runBacktests(params: {
   initialCapital: number;
   feeBps?: number;
   slippageBps?: number;
+  strategyIds?: string[];
 }): StrategyResult[] {
-  const { candles, interval, initialCapital, feeBps = 10, slippageBps = 5 } = params;
-  const strategies = buildStrategies(candles);
+  const {
+    candles,
+    interval,
+    initialCapital,
+    feeBps = 10,
+    slippageBps = 5,
+    strategyIds,
+  } = params;
+  const availableStrategies = buildStrategies(candles);
 
-  const results = strategies
+  const selectedStrategies =
+    strategyIds && strategyIds.length > 0
+      ? availableStrategies.filter((strategy) => strategyIds.includes(strategy.id))
+      : availableStrategies;
+
+  const results = selectedStrategies
     .map((strategy) =>
       runSingleStrategy({
         candles,

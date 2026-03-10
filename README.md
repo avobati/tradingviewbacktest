@@ -19,6 +19,7 @@
 
 - SMA 20/50 Crossover
 - EMA 12/26 Crossover
+- EMA 200 Cross
 - RSI 14 Reversion
 - MACD Signal Cross
 - Bollinger Re-Entry (20,2)
@@ -26,6 +27,10 @@
 - Williams %R 14
 - CCI 20 Threshold
 - EMA 200 + RSI Regime
+- UT Buy Alert
+- WaveTrend Cross
+
+The dashboard includes a strategy selector with a "Select All Suggested" action so you can run all available indicators at once or test a custom subset.
 
 ## Local Setup
 

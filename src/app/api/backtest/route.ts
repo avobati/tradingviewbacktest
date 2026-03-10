@@ -8,6 +8,7 @@ import {
   type SupportedInterval,
 } from "@/lib/market-data";
 import { prisma } from "@/lib/prisma";
+import { STRATEGY_IDS } from "@/lib/strategy-catalog";
 
 const requestSchema = z.object({
   symbol: z
@@ -21,6 +22,7 @@ const requestSchema = z.object({
   initialCapital: z.coerce.number().positive().min(100),
   feeBps: z.coerce.number().min(0).max(200).optional(),
   slippageBps: z.coerce.number().min(0).max(200).optional(),
+  strategyIds: z.array(z.string()).optional(),
 });
 
 function parseDate(input: string): number {
@@ -65,6 +67,16 @@ export async function POST(request: Request) {
     }
 
     const interval = payload.timeframe as SupportedInterval;
+    const selectedStrategyIds = (payload.strategyIds ?? []).filter((id) =>
+      STRATEGY_IDS.includes(id),
+    );
+    if (payload.strategyIds && selectedStrategyIds.length === 0) {
+      return NextResponse.json(
+        { error: "Select at least one valid indicator strategy." },
+        { status: 400 },
+      );
+    }
+
     const candles = await fetchCandles({
       symbol: payload.symbol,
       interval,
@@ -88,7 +100,15 @@ export async function POST(request: Request) {
       initialCapital: payload.initialCapital,
       feeBps: payload.feeBps,
       slippageBps: payload.slippageBps,
+      strategyIds: selectedStrategyIds,
     });
+
+    if (results.length === 0) {
+      return NextResponse.json(
+        { error: "No strategies selected for backtest." },
+        { status: 400 },
+      );
+    }
 
     const best = results[0];
     let runId: string | null = null;
@@ -136,6 +156,7 @@ export async function POST(request: Request) {
       endDate: payload.endDate,
       initialCapital: payload.initialCapital,
       candleCount: candles.length,
+      strategyIds: selectedStrategyIds,
       bestStrategy: best,
       results,
       note:

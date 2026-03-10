@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { STRATEGY_CATALOG, STRATEGY_IDS } from "@/lib/strategy-catalog";
 
 type StrategyResult = {
   strategy: string;
@@ -34,6 +35,7 @@ type BacktestResponse = {
   endDate: string;
   initialCapital: number;
   candleCount: number;
+  strategyIds: string[];
   bestStrategy: StrategyResult;
   results: StrategyResult[];
   note: string;
@@ -69,6 +71,7 @@ const DEFAULT_FORM = {
   initialCapital: 10_000,
   feeBps: 10,
   slippageBps: 5,
+  strategyIds: [...STRATEGY_IDS],
 };
 
 function asCurrency(value: number): string {
@@ -108,9 +111,24 @@ export function BacktestDashboard() {
     void loadHistory();
   }, []);
 
+  function toggleStrategy(strategyId: string) {
+    setForm((prev) => {
+      const selected = prev.strategyIds.includes(strategyId)
+        ? prev.strategyIds.filter((id) => id !== strategyId)
+        : [...prev.strategyIds, strategyId];
+      return { ...prev, strategyIds: selected };
+    });
+  }
+
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
+
+    if (form.strategyIds.length === 0) {
+      setError("Select at least one indicator strategy to run.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -157,6 +175,7 @@ export function BacktestDashboard() {
                   Best: <span className="font-semibold text-cyan-200">{result.bestStrategy.strategy}</span>
                 </p>
                 <p>Candles: {result.candleCount}</p>
+                <p>Strategies: {result.results.length}</p>
               </>
             ) : (
               <p>Run a backtest to see top strategy selection.</p>
@@ -255,6 +274,55 @@ export function BacktestDashboard() {
               className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none ring-cyan-400 transition focus:ring-2"
             />
           </label>
+
+          <div className="rounded-xl border border-slate-700 bg-slate-950/80 p-3 md:col-span-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-medium text-slate-100">
+                Indicator Selection ({form.strategyIds.length}/{STRATEGY_CATALOG.length})
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setForm((prev) => ({ ...prev, strategyIds: [...STRATEGY_IDS] }))
+                  }
+                  className="rounded-lg border border-cyan-500/50 px-3 py-1.5 text-xs font-medium text-cyan-200 transition hover:bg-cyan-500/10"
+                >
+                  Select All Suggested
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm((prev) => ({ ...prev, strategyIds: [] }))}
+                  className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-800"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {STRATEGY_CATALOG.map((strategy) => {
+                const checked = form.strategyIds.includes(strategy.id);
+                return (
+                  <label
+                    key={strategy.id}
+                    className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${
+                      checked
+                        ? "border-cyan-400/70 bg-cyan-500/10 text-cyan-100"
+                        : "border-slate-700 bg-slate-900/80 text-slate-300 hover:border-slate-500"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleStrategy(strategy.id)}
+                      className="h-4 w-4 accent-cyan-400"
+                    />
+                    <span>{strategy.name}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
 
           <div className="flex items-end">
             <button
