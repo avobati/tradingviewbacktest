@@ -58,7 +58,7 @@ type RunHistoryItem = {
   } | null;
 };
 
-const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
+const TIMEFRAME_OPTIONS = ["1h", "4h", "1d", "1W", "1M"] as const;
 
 const today = new Date();
 const ninetyDaysAgo = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);

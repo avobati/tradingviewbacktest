@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     if (!isSupportedInterval(payload.timeframe)) {
       return NextResponse.json(
         {
-          error: "Unsupported timeframe. Choose one of: 1m, 5m, 15m, 1h, 4h, 1d",
+          error: "Unsupported timeframe. Choose one of: 1h, 4h, 1d, 1W, 1M",
         },
         { status: 400 },
       );

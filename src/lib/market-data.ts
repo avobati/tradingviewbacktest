@@ -1,21 +1,19 @@
 const YAHOO_BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart";
 
 const INTERVAL_TO_MS: Record<string, number> = {
-  "1m": 60_000,
-  "5m": 300_000,
-  "15m": 900_000,
   "1h": 3_600_000,
   "4h": 14_400_000,
   "1d": 86_400_000,
+  "1W": 604_800_000,
+  "1M": 2_592_000_000,
 };
 
 const YAHOO_INTERVAL_MAP: Record<string, string> = {
-  "1m": "1m",
-  "5m": "5m",
-  "15m": "15m",
   "1h": "1h",
   "4h": "1h",
   "1d": "1d",
+  "1W": "1wk",
+  "1M": "1mo",
 };
 
 export type SupportedInterval = keyof typeof INTERVAL_TO_MS;
