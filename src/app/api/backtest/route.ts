@@ -3,9 +3,9 @@ import { z } from "zod";
 
 import { runBacktests } from "@/lib/backtest";
 import {
-  fetchCandlesFromBinance,
+  fetchCandles,
   isSupportedInterval,
-  type BinanceInterval,
+  type SupportedInterval,
 } from "@/lib/market-data";
 import { prisma } from "@/lib/prisma";
 
@@ -14,7 +14,7 @@ const requestSchema = z.object({
     .string()
     .trim()
     .toUpperCase()
-    .regex(/^[A-Z0-9]{4,20}$/, "Use a valid Binance pair like BTCUSDT"),
+    .regex(/^[A-Z0-9\-/]{2,20}$/, "Use a valid symbol such as BTCUSDT or AAPL"),
   timeframe: z.string(),
   startDate: z.string(),
   endDate: z.string(),
@@ -64,8 +64,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const interval = payload.timeframe as BinanceInterval;
-    const candles = await fetchCandlesFromBinance({
+    const interval = payload.timeframe as SupportedInterval;
+    const candles = await fetchCandles({
       symbol: payload.symbol,
       interval,
       startTime: startMs,
@@ -139,7 +139,7 @@ export async function POST(request: Request) {
       bestStrategy: best,
       results,
       note:
-        "This engine uses Binance OHLCV with TradingView-style indicator logic and long-only execution.",
+        "This engine uses Yahoo Finance OHLCV with TradingView-style indicator logic and long-only execution.",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to run backtest";

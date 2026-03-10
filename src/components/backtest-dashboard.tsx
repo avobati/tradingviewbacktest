@@ -146,8 +146,8 @@ export function BacktestDashboard() {
               tradingviewbacktest
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-300">
-              Backtest TradingView-style indicator strategies on Binance OHLCV and auto-rank the
-              best performer by risk-adjusted score.
+              Backtest TradingView-style indicator strategies on Yahoo Finance OHLCV and auto-rank
+              the best performer by risk-adjusted score.
             </p>
           </div>
           <div className="rounded-2xl border border-cyan-500/40 bg-slate-800/70 px-4 py-3 text-sm text-slate-200">

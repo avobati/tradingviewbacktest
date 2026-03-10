@@ -2,7 +2,7 @@
 
 `tradingviewbacktest` is a full-stack Next.js app that:
 
-- Pulls historical Binance candles
+- Pulls historical market candles from Yahoo Finance
 - Backtests multiple TradingView-style indicator strategies
 - Ranks strategies by a risk-adjusted score
 - Saves run results to Neon Postgres through Prisma
@@ -81,5 +81,5 @@ npx prisma db push
 
 ## Notes
 
-- Data source is Binance spot OHLCV; symbol format should match Binance pairs (for example `BTCUSDT`).
+- Market data comes from Yahoo Finance. Crypto pairs like `BTCUSDT` are normalized to `BTC-USD`, and equity tickers like `AAPL` are supported.
 - Strategy logic is TradingView-style indicator behavior, not direct execution of arbitrary Pine scripts.

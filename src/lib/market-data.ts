@@ -1,23 +1,24 @@
-const BINANCE_BASE_URL = "https://api.binance.com";
-const MAX_BATCH = 1000;
-const MAX_CANDLES = 6000;
+const YAHOO_BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart";
 
 const INTERVAL_TO_MS: Record<string, number> = {
   "1m": 60_000,
-  "3m": 180_000,
   "5m": 300_000,
   "15m": 900_000,
-  "30m": 1_800_000,
   "1h": 3_600_000,
-  "2h": 7_200_000,
   "4h": 14_400_000,
-  "6h": 21_600_000,
-  "8h": 28_800_000,
-  "12h": 43_200_000,
   "1d": 86_400_000,
 };
 
-export type BinanceInterval = keyof typeof INTERVAL_TO_MS;
+const YAHOO_INTERVAL_MAP: Record<string, string> = {
+  "1m": "1m",
+  "5m": "5m",
+  "15m": "15m",
+  "1h": "1h",
+  "4h": "1h",
+  "1d": "1d",
+};
+
+export type SupportedInterval = keyof typeof INTERVAL_TO_MS;
 
 export type Candle = {
   openTime: number;
@@ -29,100 +30,161 @@ export type Candle = {
   closeTime: number;
 };
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+type YahooChartResponse = {
+  chart?: {
+    error?: { code?: string; description?: string } | null;
+    result?: Array<{
+      timestamp?: number[];
+      indicators?: {
+        quote?: Array<{
+          open?: Array<number | null>;
+          high?: Array<number | null>;
+          low?: Array<number | null>;
+          close?: Array<number | null>;
+          volume?: Array<number | null>;
+        }>;
+      };
+    }>;
+  };
+};
 
-export function intervalToMs(interval: BinanceInterval): number {
+export function intervalToMs(interval: SupportedInterval): number {
   return INTERVAL_TO_MS[interval];
 }
 
-export function isSupportedInterval(value: string): value is BinanceInterval {
+export function isSupportedInterval(value: string): value is SupportedInterval {
   return Object.prototype.hasOwnProperty.call(INTERVAL_TO_MS, value);
 }
 
-export async function fetchCandlesFromBinance(params: {
+function normalizeSymbol(input: string): string {
+  const value = input.trim().toUpperCase().replace("/", "");
+  if (value.endsWith("USDT") || value.endsWith("USDC") || value.endsWith("BUSD")) {
+    const base = value.slice(0, -4);
+    return `${base}-USD`;
+  }
+  if (value.endsWith("USD") && !value.includes("-")) {
+    const base = value.slice(0, -3);
+    if (base.length >= 2 && base.length <= 6) {
+      return `${base}-USD`;
+    }
+  }
+  return value;
+}
+
+function aggregateCandles(candles: Candle[], groupSize: number): Candle[] {
+  if (groupSize <= 1) {
+    return candles;
+  }
+
+  const output: Candle[] = [];
+  for (let i = 0; i < candles.length; i += groupSize) {
+    const group = candles.slice(i, i + groupSize);
+    if (group.length < groupSize) {
+      break;
+    }
+    const first = group[0];
+    const last = group[group.length - 1];
+    const high = Math.max(...group.map((candle) => candle.high));
+    const low = Math.min(...group.map((candle) => candle.low));
+    const volume = group.reduce((sum, candle) => sum + candle.volume, 0);
+
+    output.push({
+      openTime: first.openTime,
+      open: first.open,
+      high,
+      low,
+      close: last.close,
+      volume,
+      closeTime: last.closeTime,
+    });
+  }
+  return output;
+}
+
+export async function fetchCandles(params: {
   symbol: string;
-  interval: BinanceInterval;
+  interval: SupportedInterval;
   startTime: number;
   endTime: number;
 }): Promise<Candle[]> {
   const { symbol, interval, startTime, endTime } = params;
+  const yahooSymbol = normalizeSymbol(symbol);
+  const yahooInterval = YAHOO_INTERVAL_MAP[interval];
+  const period1 = Math.floor(startTime / 1000);
+  const period2 = Math.floor(endTime / 1000);
+
+  const url = new URL(`${YAHOO_BASE_URL}/${yahooSymbol}`);
+  url.searchParams.set("interval", yahooInterval);
+  url.searchParams.set("period1", String(period1));
+  url.searchParams.set("period2", String(period2));
+  url.searchParams.set("events", "history");
+  url.searchParams.set("includePrePost", "false");
+
+  const response = await fetch(url, {
+    cache: "no-store",
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "tradingviewbacktest/1.0",
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Market data request failed (${response.status}): ${text || response.statusText}`);
+  }
+
+  const payload = (await response.json()) as YahooChartResponse;
+  const chartError = payload.chart?.error;
+  if (chartError) {
+    throw new Error(chartError.description || chartError.code || "Market data error");
+  }
+
+  const result = payload.chart?.result?.[0];
+  const timestamps = result?.timestamp ?? [];
+  const quote = result?.indicators?.quote?.[0];
+  const opens = quote?.open ?? [];
+  const highs = quote?.high ?? [];
+  const lows = quote?.low ?? [];
+  const closes = quote?.close ?? [];
+  const volumes = quote?.volume ?? [];
+
   const candles: Candle[] = [];
-  const intervalMs = intervalToMs(interval);
-  let cursor = startTime;
-  let safetyLoops = 0;
+  for (let i = 0; i < timestamps.length; i += 1) {
+    const ts = timestamps[i];
+    const open = opens[i];
+    const high = highs[i];
+    const low = lows[i];
+    const close = closes[i];
+    const volume = volumes[i] ?? 0;
 
-  while (cursor < endTime && candles.length < MAX_CANDLES) {
-    const url = new URL("/api/v3/klines", BINANCE_BASE_URL);
-    url.searchParams.set("symbol", symbol);
-    url.searchParams.set("interval", interval);
-    url.searchParams.set("startTime", String(cursor));
-    url.searchParams.set("endTime", String(endTime));
-    url.searchParams.set("limit", String(MAX_BATCH));
+    if (
+      ts === undefined ||
+      open === null ||
+      high === null ||
+      low === null ||
+      close === null ||
+      open === undefined ||
+      high === undefined ||
+      low === undefined ||
+      close === undefined
+    ) {
+      continue;
+    }
 
-    const response = await fetch(url, {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
+    candles.push({
+      openTime: ts * 1000,
+      open,
+      high,
+      low,
+      close,
+      volume: volume ?? 0,
+      closeTime: ts * 1000 + intervalToMs(interval),
     });
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(
-        `Binance request failed (${response.status}): ${body || response.statusText}`,
-      );
-    }
-
-    const batch = (await response.json()) as unknown[];
-    if (!Array.isArray(batch) || batch.length === 0) {
-      break;
-    }
-
-    for (const row of batch) {
-      if (!Array.isArray(row) || row.length < 7) {
-        continue;
-      }
-
-      const openTimeValue = Number(row[0]);
-      if (!Number.isFinite(openTimeValue)) {
-        continue;
-      }
-
-      candles.push({
-        openTime: openTimeValue,
-        open: Number(row[1]),
-        high: Number(row[2]),
-        low: Number(row[3]),
-        close: Number(row[4]),
-        volume: Number(row[5]),
-        closeTime: Number(row[6]),
-      });
-    }
-
-    const last = batch[batch.length - 1] as unknown[];
-    const lastOpenTime = Number(last[0]);
-    if (!Number.isFinite(lastOpenTime)) {
-      break;
-    }
-
-    cursor = lastOpenTime + intervalMs;
-    safetyLoops += 1;
-    if (safetyLoops > 32) {
-      break;
-    }
-
-    if (batch.length < MAX_BATCH) {
-      break;
-    }
-
-    await sleep(110);
   }
 
-  const deduped = new Map<number, Candle>();
-  for (const candle of candles) {
-    deduped.set(candle.openTime, candle);
+  const sorted = candles.sort((a, b) => a.openTime - b.openTime);
+  if (interval === "4h") {
+    return aggregateCandles(sorted, 4);
   }
-
-  return [...deduped.values()]
-    .filter((candle) => candle.openTime >= startTime && candle.openTime <= endTime)
-    .sort((a, b) => a.openTime - b.openTime)
-    .slice(0, MAX_CANDLES);
+  return sorted;
 }

@@ -9,7 +9,7 @@ import {
   WilliamsR,
 } from "technicalindicators";
 
-import type { BinanceInterval, Candle } from "@/lib/market-data";
+import type { Candle, SupportedInterval } from "@/lib/market-data";
 import { intervalToMs } from "@/lib/market-data";
 
 type Signal = -1 | 0 | 1;
@@ -366,7 +366,7 @@ function runSingleStrategy(params: {
   candles: Candle[];
   strategy: Strategy;
   initialCapital: number;
-  interval: BinanceInterval;
+  interval: SupportedInterval;
   feeBps: number;
   slippageBps: number;
 }): Omit<StrategyResult, "rank"> {
@@ -501,7 +501,7 @@ function runSingleStrategy(params: {
 
 export function runBacktests(params: {
   candles: Candle[];
-  interval: BinanceInterval;
+  interval: SupportedInterval;
   initialCapital: number;
   feeBps?: number;
   slippageBps?: number;
