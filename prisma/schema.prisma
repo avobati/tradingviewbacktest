@@ -1,0 +1,46 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model BacktestRun {
+  id             String           @id @default(cuid())
+  symbol         String
+  timeframe      String
+  startDate      DateTime
+  endDate        DateTime
+  initialCapital Float
+  candleCount    Int
+  topStrategy    String?
+  topScore       Float?
+  createdAt      DateTime         @default(now())
+  results        BacktestResult[]
+
+  @@index([createdAt(sort: Desc)])
+  @@index([symbol, timeframe])
+}
+
+model BacktestResult {
+  id             String      @id @default(cuid())
+  runId          String
+  run            BacktestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  strategy       String
+  rank           Int
+  totalReturnPct Float
+  cagrPct        Float
+  maxDrawdownPct Float
+  sharpe         Float
+  winRatePct     Float
+  profitFactor   Float
+  trades         Int
+  score          Float
+  equityPoints   Json?
+  createdAt      DateTime    @default(now())
+
+  @@index([runId, rank])
+  @@index([strategy])
+}
